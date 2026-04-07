@@ -8,6 +8,8 @@ import type { ReviewContext } from './reviewer.ts';
 
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
+import { mkdtemp, rm } from 'fs/promises';
 import { marked } from 'marked';
 import * as sdk from '../sdk/azure-devops-client.ts';
 import * as rev from './reviewer.ts';
@@ -53,32 +55,51 @@ async function gitDiff(
   sourceBranch: string,
   targetBranch: string,
 ): Promise<string> {
-  const fetchProc = Bun.spawn(['git', 'fetch', '--all'], {
-    cwd: targetRepoPath,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  const fetchExit = await fetchProc.exited;
-  if (fetchExit !== 0) {
-    const stderr = await new Response(fetchProc.stderr).text();
-    throw new Error(`git fetch failed (exit ${fetchExit}): ${stderr}`);
-  }
+  // Clone into a writable temp dir so git can write FETCH_HEAD etc.
+  // Uses --shared to avoid copying objects (fast, low disk usage).
+  const tmpDir = await mkdtemp(join(tmpdir(), 'code-review-'));
+  const clonePath = join(tmpDir, 'repo');
 
-  const diffProc = Bun.spawn(
-    ['git', 'diff', `origin/${targetBranch}...origin/${sourceBranch}`, '--unified=5'],
-    {
-      cwd: targetRepoPath,
+  try {
+    const cloneProc = Bun.spawn(
+      ['git', 'clone', '--shared', '--no-checkout', targetRepoPath, clonePath],
+      { stdout: 'pipe', stderr: 'pipe' },
+    );
+    const cloneExit = await cloneProc.exited;
+    if (cloneExit !== 0) {
+      const stderr = await new Response(cloneProc.stderr).text();
+      throw new Error(`git clone failed (exit ${cloneExit}): ${stderr}`);
+    }
+
+    const fetchProc = Bun.spawn(['git', 'fetch', 'origin'], {
+      cwd: clonePath,
       stdout: 'pipe',
       stderr: 'pipe',
-    },
-  );
-  const diffExit = await diffProc.exited;
-  if (diffExit !== 0) {
-    const stderr = await new Response(diffProc.stderr).text();
-    throw new Error(`git diff failed (exit ${diffExit}): ${stderr}`);
-  }
+    });
+    const fetchExit = await fetchProc.exited;
+    if (fetchExit !== 0) {
+      const stderr = await new Response(fetchProc.stderr).text();
+      throw new Error(`git fetch failed (exit ${fetchExit}): ${stderr}`);
+    }
 
-  return await new Response(diffProc.stdout).text();
+    const diffProc = Bun.spawn(
+      ['git', 'diff', `origin/${targetBranch}...origin/${sourceBranch}`, '--unified=5'],
+      {
+        cwd: clonePath,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    const diffExit = await diffProc.exited;
+    if (diffExit !== 0) {
+      const stderr = await new Response(diffProc.stderr).text();
+      throw new Error(`git diff failed (exit ${diffExit}): ${stderr}`);
+    }
+
+    return await new Response(diffProc.stdout).text();
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
