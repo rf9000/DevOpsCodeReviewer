@@ -2,6 +2,9 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { stageAgentWorkspace } from '../sdk/agent-workspace.ts';
 import type { AppConfig } from '../types/index.ts';
+import { mkdtemp, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 // ---------------------------------------------------------------------------
 // Bash safety — block destructive commands
@@ -124,7 +127,9 @@ export async function reviewPullRequest(
   context: ReviewContext,
   agentSourceDir: string,
 ): Promise<string> {
-  const staged = await stageAgentWorkspace(agentSourceDir, config.targetRepoPath);
+  // Stage into a writable temp dir (target repo may be read-only)
+  const stagingDir = await mkdtemp(join(tmpdir(), 'agent-workspace-'));
+  const staged = await stageAgentWorkspace(agentSourceDir, stagingDir);
 
   try {
     const userPrompt = buildUserPrompt(context);
@@ -149,7 +154,7 @@ export async function reviewPullRequest(
           preset: 'claude_code',
         },
         settingSources: ['project'],
-        cwd: config.targetRepoPath,
+        cwd: stagingDir,
       },
     })) {
       if (message.type === 'assistant') {
@@ -200,5 +205,6 @@ export async function reviewPullRequest(
     return result.trim();
   } finally {
     await staged.cleanup();
+    await rm(stagingDir, { recursive: true, force: true });
   }
 }
