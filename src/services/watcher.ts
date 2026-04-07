@@ -72,70 +72,43 @@ export async function runPollCycle(
   stateStore: StateStore,
   deps: WatcherDeps = defaultDeps,
 ): Promise<{ reviewed: number; skipped: number; errors: number }> {
-  // 1. On first run, seed existing labeled PRs as already processed
-  if (stateStore.isFirstRun) {
-    log('First run detected — seeding existing labeled PRs as already processed...');
-    const existing = await findLabeledPRs(config, stateStore, deps);
-    for (const candidate of existing) {
-      const prKey = `${candidate.repoId}:${candidate.pullRequest.pullRequestId}`;
-      stateStore.markProcessed(prKey);
-    }
-    stateStore.save();
-    log(`Seeded ${existing.length} existing PRs. Future runs will only process new PRs.`);
-    return { reviewed: 0, skipped: existing.length, errors: 0 };
-  }
-
-  // 2. Find labeled PRs across all repos
+  // Find labeled PRs across all repos
   const candidates = await findLabeledPRs(config, stateStore, deps);
 
-  // 3. Filter out already-processed PRs
-  const newCandidates = candidates.filter((c) => {
-    const prKey = `${c.repoId}:${c.pullRequest.pullRequestId}`;
-    return !stateStore.isProcessed(prKey);
-  });
-
-  log(
-    `Found ${candidates.length} candidates, ${candidates.length - newCandidates.length} already processed`,
-  );
+  log(`Found ${candidates.length} labeled PRs`);
 
   let reviewed = 0;
   let skipped = 0;
   let errors = 0;
 
-  for (const candidate of newCandidates) {
+  for (const candidate of candidates) {
     // 4. Check daily limit
     if (!stateStore.canReviewToday(config.maxReviewsPerDay)) {
       log(
         `Daily review limit reached (${config.maxReviewsPerDay}). Skipping remaining PRs.`,
       );
-      skipped += newCandidates.length - (reviewed + errors);
+      skipped += candidates.length - (reviewed + errors);
       break;
     }
 
-    const prKey = `${candidate.repoId}:${candidate.pullRequest.pullRequestId}`;
+    const prId = candidate.pullRequest.pullRequestId;
 
     try {
       const result = await deps.processPR(config, candidate);
 
       if (result.reviewed) {
-        stateStore.markProcessed(prKey);
         stateStore.incrementDailyCount();
         reviewed++;
       } else {
-        log(`PR ${prKey}: Review failed — ${result.error ?? 'unknown reason'}`);
+        log(`PR #${prId}: Review failed — ${result.error ?? 'unknown reason'}`);
         errors++;
       }
     } catch (err) {
-      log(`PR ${prKey}: Fatal error — ${err}`);
+      log(`PR #${prId}: Fatal error — ${err}`);
       errors++;
     }
   }
 
-  // 5. Collect all known PR keys for pruning
-  const allKnownKeys = candidates.map(
-    (c) => `${c.repoId}:${c.pullRequest.pullRequestId}`,
-  );
-  stateStore.pruneProcessed(allKnownKeys);
   stateStore.save();
 
   return { reviewed, skipped, errors };
@@ -171,7 +144,6 @@ export async function startWatcher(
 
   log(`Starting watcher — polling every ${config.pollIntervalMinutes} minutes`);
   log(`Watching ${config.repoIds.length} repos`);
-  log(`${stateStore.processedCount} PRs already processed`);
   log(`Max ${config.maxReviewsPerDay} reviews per day`);
 
   while (!signal.aborted) {

@@ -124,11 +124,11 @@ describe('runPollCycle', () => {
     expect(candidate.labelId).toBe('lbl-1');
   });
 
-  test('already-processed PR is skipped', async () => {
+  test('labeled PR is reviewed even if previously processed', async () => {
     const config = mockConfig();
     const pr = mockPR({ pullRequestId: 200 });
 
-    // Mark as processed using the key format from findLabeledPRs: "repoId:prId"
+    // Mark as processed — should not prevent re-review while label is present
     stateStore.markProcessed('repo-1:200');
     stateStore.save();
 
@@ -143,8 +143,8 @@ describe('runPollCycle', () => {
 
     const result = await runPollCycle(config, stateStore, deps);
 
-    expect(result.reviewed).toBe(0);
-    expect(deps.processPR).toHaveBeenCalledTimes(0);
+    expect(result.reviewed).toBe(1);
+    expect(deps.processPR).toHaveBeenCalledTimes(1);
   });
 
   test('daily limit stops processing', async () => {
@@ -176,7 +176,7 @@ describe('runPollCycle', () => {
     expect(deps.processPR).toHaveBeenCalledTimes(1);
   });
 
-  test('first-run seeding: seeds existing PRs as processed, returns skipped count', async () => {
+  test('first run reviews labeled PRs normally', async () => {
     // Create a fresh store that has never been saved (isFirstRun = true)
     const freshDir = mkdtempSync(join(tmpdir(), 'watcher-first-run-'));
     const freshStore = new StateStore(freshDir);
@@ -196,14 +196,9 @@ describe('runPollCycle', () => {
 
     const result = await runPollCycle(config, freshStore, deps);
 
-    expect(result.reviewed).toBe(0);
-    expect(result.skipped).toBe(2);
+    expect(result.reviewed).toBe(2);
     expect(result.errors).toBe(0);
-    // processPR should NOT have been called — seeding only
-    expect(deps.processPR).toHaveBeenCalledTimes(0);
-    // The PRs are now marked as processed in the state
-    expect(freshStore.isProcessed('repo-1:501')).toBe(true);
-    expect(freshStore.isProcessed('repo-1:502')).toBe(true);
+    expect(deps.processPR).toHaveBeenCalledTimes(2);
 
     rmSync(freshDir, { recursive: true, force: true });
   });
