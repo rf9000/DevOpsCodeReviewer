@@ -18,7 +18,10 @@ if [ "$(id -u)" = "0" ]; then
   # Mark all repos as safe for git (ownership differs inside container)
   for dir in /repos/*/; do
     [ ! -d "$dir" ] && continue
-    su claude -c "git config --global --add safe.directory \"$dir\""
+    # Strip trailing slash and mark both repo dir and .git dir as safe
+    safe="${dir%/}"
+    su claude -c "git config --global --add safe.directory \"$safe\""
+    su claude -c "git config --global --add safe.directory \"$safe/.git\""
     if touch "$dir/.chown-test" 2>/dev/null; then
       rm -f "$dir/.chown-test"
       chown -R claude:claude "$dir"
