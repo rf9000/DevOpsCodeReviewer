@@ -1,42 +1,37 @@
 import { describe, test, expect } from 'bun:test';
 import { loadConfig } from '../../src/config/index.ts';
-import { queryWorkItems, getWorkItem, getWorkItemsBatch } from '../../src/sdk/azure-devops-client.ts';
+import {
+  listActivePullRequests,
+  getPullRequestLabels,
+} from '../../src/sdk/azure-devops-client.ts';
 
 const hasCredentials = Boolean(
   process.env.AZURE_DEVOPS_PAT &&
   process.env.AZURE_DEVOPS_ORG &&
-  process.env.AZURE_DEVOPS_PROJECT,
+  process.env.AZURE_DEVOPS_PROJECT &&
+  process.env.AZURE_DEVOPS_REPO_IDS &&
+  process.env.TARGET_REPO_PATH,
 );
 
-describe.skipIf(!hasCredentials)('Integration: Azure DevOps API', () => {
-  test('can query work items via WIQL', async () => {
+describe.skipIf(!hasCredentials)('Integration: Azure DevOps PR API', () => {
+  test('can list active pull requests', async () => {
     const config = loadConfig();
-    const ids = await queryWorkItems(config, config.wiqlQuery);
-    expect(Array.isArray(ids)).toBe(true);
-    if (ids.length > 0) {
-      expect(ids[0]).toBeNumber();
+    const repoId = config.repoIds[0]!;
+    const prs = await listActivePullRequests(config, repoId);
+    expect(Array.isArray(prs)).toBe(true);
+    if (prs.length > 0) {
+      expect(prs[0]!.pullRequestId).toBeNumber();
+      expect(prs[0]!.title).toBeString();
     }
   });
 
-  test('can get work item details', async () => {
+  test('can get PR labels', async () => {
     const config = loadConfig();
-    const ids = await queryWorkItems(config, config.wiqlQuery);
-    if (ids.length > 0) {
-      const wi = await getWorkItem(config, ids[0]!);
-      expect(wi.id).toBeNumber();
-      expect(wi.fields).toBeDefined();
-      expect(wi.fields['System.Title']).toBeString();
-    }
-  });
-
-  test('can batch fetch work items', async () => {
-    const config = loadConfig();
-    const ids = await queryWorkItems(config, config.wiqlQuery);
-    if (ids.length >= 2) {
-      const items = await getWorkItemsBatch(config, ids.slice(0, 2));
-      expect(items.length).toBe(2);
-      expect(items[0]!.id).toBeNumber();
-      expect(items[1]!.id).toBeNumber();
+    const repoId = config.repoIds[0]!;
+    const prs = await listActivePullRequests(config, repoId);
+    if (prs.length > 0) {
+      const labels = await getPullRequestLabels(config, repoId, prs[0]!.pullRequestId);
+      expect(Array.isArray(labels)).toBe(true);
     }
   });
 });

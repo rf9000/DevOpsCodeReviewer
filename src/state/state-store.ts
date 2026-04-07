@@ -2,15 +2,19 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import type { ProcessedState } from '../types/index.ts';
 
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export class StateStore {
   private filePath: string;
   private state: ProcessedState;
-  private processedSet: Set<number>;
+  private processedSet: Set<string>;
 
   constructor(stateDir: string) {
-    this.filePath = join(stateDir, 'processed-items.json');
+    this.filePath = join(stateDir, 'processed-prs.json');
     this.state = this.load();
-    this.processedSet = new Set(this.state.processedItemIds);
+    this.processedSet = new Set(this.state.processedPrKeys);
   }
 
   private load(): ProcessedState {
@@ -22,8 +26,8 @@ export class StateStore {
         if (
           parsed !== null &&
           typeof parsed === 'object' &&
-          'processedItemIds' in parsed &&
-          Array.isArray((parsed as ProcessedState).processedItemIds)
+          'processedPrKeys' in parsed &&
+          Array.isArray((parsed as ProcessedState).processedPrKeys)
         ) {
           return parsed as ProcessedState;
         }
@@ -31,7 +35,12 @@ export class StateStore {
     } catch {
       // file doesn't exist or is corrupted JSON — start fresh
     }
-    return { processedItemIds: [], lastRunAt: '' };
+    return {
+      processedPrKeys: [],
+      lastRunAt: '',
+      dailyReviewCount: 0,
+      dailyCountDate: '',
+    };
   }
 
   save(): void {
@@ -40,24 +49,58 @@ export class StateStore {
     writeFileSync(this.filePath, JSON.stringify(this.state, null, 2), 'utf-8');
   }
 
-  isProcessed(itemId: number): boolean {
-    return this.processedSet.has(itemId);
+  isProcessed(prKey: string): boolean {
+    return this.processedSet.has(prKey);
   }
 
-  markProcessed(itemId: number): void {
-    if (!this.processedSet.has(itemId)) {
-      this.processedSet.add(itemId);
-      this.state.processedItemIds.push(itemId);
+  markProcessed(prKey: string): void {
+    if (!this.processedSet.has(prKey)) {
+      this.processedSet.add(prKey);
+      this.state.processedPrKeys.push(prKey);
     }
   }
 
+  canReviewToday(max: number): boolean {
+    const today = todayISO();
+    if (this.state.dailyCountDate !== today) {
+      this.state.dailyReviewCount = 0;
+      this.state.dailyCountDate = today;
+    }
+    return this.state.dailyReviewCount < max;
+  }
+
+  incrementDailyCount(): void {
+    const today = todayISO();
+    if (this.state.dailyCountDate !== today) {
+      this.state.dailyReviewCount = 0;
+      this.state.dailyCountDate = today;
+    }
+    this.state.dailyReviewCount++;
+  }
+
+  pruneProcessed(currentKeys: string[]): void {
+    const currentSet = new Set(currentKeys);
+    const kept = this.state.processedPrKeys.filter((key) => currentSet.has(key));
+    this.state.processedPrKeys = kept;
+    this.processedSet = new Set(kept);
+  }
+
   reset(): void {
-    this.state = { processedItemIds: [], lastRunAt: '' };
+    this.state = {
+      processedPrKeys: [],
+      lastRunAt: '',
+      dailyReviewCount: 0,
+      dailyCountDate: '',
+    };
     this.processedSet = new Set();
     this.save();
   }
 
+  get isFirstRun(): boolean {
+    return this.state.lastRunAt === '';
+  }
+
   get processedCount(): number {
-    return this.state.processedItemIds.length;
+    return this.state.processedPrKeys.length;
   }
 }

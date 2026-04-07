@@ -1,7 +1,8 @@
 import type {
   AppConfig,
-  WorkItemResponse,
-  WiqlQueryResult,
+  PullRequest,
+  PullRequestLabel,
+  CommentThread,
 } from '../types/index.ts';
 
 export class AzureDevOpsError extends Error {
@@ -82,50 +83,108 @@ export async function adoFetchWithRetry<T>(
   throw new Error('adoFetchWithRetry: unexpected code path');
 }
 
-export async function queryWorkItems(
+export async function adoFetchRaw(
   config: AppConfig,
-  wiql: string,
-): Promise<number[]> {
-  const path = 'wit/wiql?api-version=7.0';
-  const data = await adoFetchWithRetry<WiqlQueryResult>(config, path, {
-    method: 'POST',
-    body: JSON.stringify({ query: wiql }),
-  });
-  return data.workItems.map((wi) => wi.id);
+  path: string,
+  options?: RequestInit,
+  retryDelays: number[] = DEFAULT_RETRY_DELAYS,
+): Promise<Response> {
+  const maxAttempts = retryDelays.length + 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const url = `${config.orgUrl}/${config.project}/_apis/${path}`;
+      const authHeader =
+        'Basic ' + Buffer.from(':' + config.pat).toString('base64');
+
+      const headers: Record<string, string> = {
+        Authorization: authHeader,
+        'Content-Type': 'application/json',
+        ...(options?.headers as Record<string, string> | undefined),
+      };
+
+      const res = await fetch(url, {
+        ...options,
+        headers,
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        throw new AzureDevOpsError(
+          `Azure DevOps API error ${res.status}: ${body}`,
+          res.status,
+        );
+      }
+
+      return res;
+    } catch (err: unknown) {
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (err instanceof AzureDevOpsError) {
+        if (err.statusCode < 500) {
+          throw err;
+        }
+        if (isLastAttempt) {
+          throw err;
+        }
+      } else {
+        if (isLastAttempt) {
+          throw err;
+        }
+      }
+
+      const delay = retryDelays[attempt - 1] ?? 0;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  throw new Error('adoFetchRaw: unexpected code path');
 }
 
-export async function getWorkItem(
+export async function listActivePullRequests(
   config: AppConfig,
-  workItemId: number,
-): Promise<WorkItemResponse> {
-  const path = `wit/workitems/${workItemId}?$expand=all&api-version=7.0`;
-  return adoFetchWithRetry<WorkItemResponse>(config, path);
+  repoId: string,
+): Promise<PullRequest[]> {
+  const path = `git/repositories/${repoId}/pullrequests?searchCriteria.status=active&api-version=7.0`;
+  const data = await adoFetchWithRetry<{ value: PullRequest[] }>(config, path);
+  return data.value;
 }
 
-export async function getWorkItemsBatch(
+export async function getPullRequestLabels(
   config: AppConfig,
-  ids: number[],
-): Promise<WorkItemResponse[]> {
-  if (ids.length === 0) return [];
-  const idList = ids.join(',');
-  const path = `wit/workitems?ids=${idList}&$expand=all&api-version=7.0`;
-  const data = await adoFetchWithRetry<{ value: WorkItemResponse[] }>(
+  repoId: string,
+  prId: number,
+): Promise<PullRequestLabel[]> {
+  const path = `git/repositories/${repoId}/pullrequests/${prId}/labels?api-version=7.0-preview.1`;
+  const data = await adoFetchWithRetry<{ value: PullRequestLabel[] }>(
     config,
     path,
   );
   return data.value;
 }
 
-export async function updateWorkItemField(
+export async function removePullRequestLabel(
   config: AppConfig,
-  workItemId: number,
-  fieldName: string,
-  value: string,
-): Promise<WorkItemResponse> {
-  const path = `wit/workitems/${workItemId}?api-version=7.0`;
-  return adoFetchWithRetry<WorkItemResponse>(config, path, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json-patch+json' },
-    body: JSON.stringify([{ op: 'add', path: `/fields/${fieldName}`, value }]),
+  repoId: string,
+  prId: number,
+  labelId: string,
+): Promise<void> {
+  const path = `git/repositories/${repoId}/pullrequests/${prId}/labels/${labelId}?api-version=7.0-preview.1`;
+  await adoFetchRaw(config, path, { method: 'DELETE' });
+}
+
+export async function addPullRequestThread(
+  config: AppConfig,
+  repoId: string,
+  prId: number,
+  content: string,
+): Promise<CommentThread> {
+  const path = `git/repositories/${repoId}/pullrequests/${prId}/threads?api-version=7.0`;
+  return adoFetchWithRetry<CommentThread>(config, path, {
+    method: 'POST',
+    body: JSON.stringify({
+      comments: [{ parentCommentId: 0, content, commentType: 1 }],
+      status: 'closed',
+    }),
   });
 }

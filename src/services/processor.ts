@@ -1,81 +1,184 @@
 import type {
   AppConfig,
-  WorkItemResponse,
-  ItemProcessResult,
+  CommentThread,
+  PRReviewCandidate,
+  PRReviewResult,
 } from '../types/index.ts';
-import type { GeneratorContext } from './ai-generator.ts';
+import type { ReviewContext } from './reviewer.ts';
 
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+import { marked } from 'marked';
 import * as sdk from '../sdk/azure-devops-client.ts';
-import * as gen from './ai-generator.ts';
+import * as rev from './reviewer.ts';
+
+// ---------------------------------------------------------------------------
+// DI surface
+// ---------------------------------------------------------------------------
 
 export interface ProcessorDeps {
-  updateWorkItemField: (
+  reviewPullRequest: (
     config: AppConfig,
-    workItemId: number,
-    fieldName: string,
-    value: string,
-  ) => Promise<WorkItemResponse>;
+    context: ReviewContext,
+    agentSourceDir: string,
+  ) => Promise<string>;
 
-  generateWithAI: (
+  addPullRequestThread: (
     config: AppConfig,
-    context: GeneratorContext,
+    repoId: string,
+    prId: number,
+    content: string,
+  ) => Promise<CommentThread>;
+
+  removePullRequestLabel: (
+    config: AppConfig,
+    repoId: string,
+    prId: number,
+    labelId: string,
+  ) => Promise<void>;
+
+  gitDiff: (
+    targetRepoPath: string,
+    sourceBranch: string,
+    targetBranch: string,
   ) => Promise<string>;
 }
 
+// ---------------------------------------------------------------------------
+// Git diff helper
+// ---------------------------------------------------------------------------
+
+async function gitDiff(
+  targetRepoPath: string,
+  sourceBranch: string,
+  targetBranch: string,
+): Promise<string> {
+  const fetchProc = Bun.spawn(['git', 'fetch', '--all'], {
+    cwd: targetRepoPath,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const fetchExit = await fetchProc.exited;
+  if (fetchExit !== 0) {
+    const stderr = await new Response(fetchProc.stderr).text();
+    throw new Error(`git fetch failed (exit ${fetchExit}): ${stderr}`);
+  }
+
+  const diffProc = Bun.spawn(
+    ['git', 'diff', `origin/${targetBranch}...origin/${sourceBranch}`, '--unified=5'],
+    {
+      cwd: targetRepoPath,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  );
+  const diffExit = await diffProc.exited;
+  if (diffExit !== 0) {
+    const stderr = await new Response(diffProc.stderr).text();
+    throw new Error(`git diff failed (exit ${diffExit}): ${stderr}`);
+  }
+
+  return await new Response(diffProc.stdout).text();
+}
+
+// ---------------------------------------------------------------------------
+// Agent source directory (project root, where .claude/ and CLAUDE.md live)
+// ---------------------------------------------------------------------------
+
+const AGENT_SOURCE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// ---------------------------------------------------------------------------
+// Default deps
+// ---------------------------------------------------------------------------
+
 const defaultDeps: ProcessorDeps = {
-  updateWorkItemField: sdk.updateWorkItemField,
-  generateWithAI: gen.generateWithAI,
+  reviewPullRequest: rev.reviewPullRequest,
+  addPullRequestThread: sdk.addPullRequestThread,
+  removePullRequestLabel: sdk.removePullRequestLabel,
+  gitDiff,
 };
 
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
 function log(message: string): void {
-  const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const now = new Date(Date.now() + 60 * 60 * 1000);
+  const ts = now.toISOString().replace('T', ' ').slice(0, 19);
   console.log(`[${ts}] ${message}`);
 }
 
-// TODO: Replace this stub with your project-specific processing logic.
-// This example processes work items found via WIQL query and generates
-// AI-powered summaries. Adapt the field checks, generation context, and
-// update logic to match your use case.
+// ---------------------------------------------------------------------------
+// Process a single PR review candidate
+// ---------------------------------------------------------------------------
 
-export async function processItem(
+export async function processPR(
   config: AppConfig,
-  item: WorkItemResponse,
+  candidate: PRReviewCandidate,
   deps: ProcessorDeps = defaultDeps,
-): Promise<ItemProcessResult> {
-  log(`Processing item #${item.id}: ${String(item.fields['System.Title'] ?? '(untitled)')}`);
+): Promise<PRReviewResult> {
+  const prKey = `${candidate.repoId}:${candidate.pullRequest.pullRequestId}`;
 
-  const context: GeneratorContext = {
-    itemTitle: String(item.fields['System.Title'] ?? ''),
-    itemType: String(item.fields['System.WorkItemType'] ?? ''),
-    itemDescription: String(item.fields['System.Description'] ?? ''),
-    itemFields: Object.fromEntries(
-      Object.entries(item.fields).filter(
-        ([key]) =>
-          !['System.Title', 'System.WorkItemType', 'System.Description'].includes(key),
-      ),
-    ),
-  };
+  const sourceBranch = candidate.pullRequest.sourceRefName.replace('refs/heads/', '');
+  const targetBranch = candidate.pullRequest.targetRefName.replace('refs/heads/', '');
+
+  log(`Processing PR #${candidate.pullRequest.pullRequestId}: "${candidate.pullRequest.title}" (${sourceBranch} → ${targetBranch})`);
 
   try {
-    log(`  Item #${item.id}: Generating AI output...`);
-    const output = await deps.generateWithAI(config, context);
+    const diff = await deps.gitDiff(config.targetRepoPath, sourceBranch, targetBranch);
 
-    if (config.dryRun) {
-      log(`  Item #${item.id}: [DRY RUN] Generated:\n    "${output}"`);
-      return { itemId: item.id, processed: true };
+    if (!diff || !diff.trim()) {
+      log(`  PR #${candidate.pullRequest.pullRequestId}: Empty diff — skipping review`);
+      return { prKey, reviewed: false, error: 'Empty diff' };
     }
 
-    // TODO: Replace 'System.Description' with the field you want to update
-    await deps.updateWorkItemField(
+    const context: ReviewContext = {
+      prTitle: candidate.pullRequest.title,
+      prDescription: candidate.pullRequest.description,
+      prAuthor: candidate.pullRequest.createdBy.displayName,
+      sourceBranch,
+      targetBranch,
+      diff,
+    };
+
+    log(`  PR #${candidate.pullRequest.pullRequestId}: Starting review...`);
+    const result = await deps.reviewPullRequest(config, context, AGENT_SOURCE_DIR);
+
+    if (!result || !result.trim()) {
+      log(`  PR #${candidate.pullRequest.pullRequestId}: Review returned empty result — skipping`);
+      return { prKey, reviewed: false, error: 'Review returned empty result' };
+    }
+
+    // Strip any preamble before first "# Code Review:" header
+    const headerIndex = result.indexOf('# Code Review:');
+    const cleanedResult = headerIndex > 0 ? result.slice(headerIndex) : result;
+
+    if (config.dryRun) {
+      log(`  PR #${candidate.pullRequest.pullRequestId}: [DRY RUN] Review result:\n${cleanedResult}`);
+      return { prKey, reviewed: true };
+    }
+
+    const commentHtml = await marked(cleanedResult);
+    await deps.addPullRequestThread(
       config,
-      item.id,
-      'System.Description',
-      output,
+      candidate.repoId,
+      candidate.pullRequest.pullRequestId,
+      commentHtml,
     );
-    log(`  Item #${item.id}: Output written`);
-    return { itemId: item.id, processed: true };
+    log(`  PR #${candidate.pullRequest.pullRequestId}: Review posted as comment`);
+
+    await deps.removePullRequestLabel(
+      config,
+      candidate.repoId,
+      candidate.pullRequest.pullRequestId,
+      candidate.labelId,
+    );
+    log(`  PR #${candidate.pullRequest.pullRequestId}: Removed review label`);
+
+    return { prKey, reviewed: true };
   } catch (err) {
-    log(`  Item #${item.id}: Error — ${err}`);
-    return { itemId: item.id, processed: false, error: String(err) };
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(`  PR #${candidate.pullRequest.pullRequestId}: Error — ${errorMsg}`);
+    return { prKey, reviewed: false, error: errorMsg };
   }
 }
