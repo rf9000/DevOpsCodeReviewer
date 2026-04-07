@@ -71,11 +71,12 @@ async function gitDiff(
       throw new Error(`git clone failed (exit ${cloneExit}): ${stderr}`);
     }
 
-    const fetchProc = Bun.spawn(['git', 'fetch', 'origin'], {
-      cwd: clonePath,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    // The clone's origin is the local repo, whose Azure DevOps branches
+    // live under refs/remotes/origin/*. Map them into our origin/* refs.
+    const fetchProc = Bun.spawn(
+      ['git', 'fetch', 'origin', '+refs/remotes/origin/*:refs/remotes/origin/*'],
+      { cwd: clonePath, stdout: 'pipe', stderr: 'pipe' },
+    );
     const fetchExit = await fetchProc.exited;
     if (fetchExit !== 0) {
       const stderr = await new Response(fetchProc.stderr).text();
