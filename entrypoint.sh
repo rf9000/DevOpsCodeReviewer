@@ -15,8 +15,10 @@ if [ "$(id -u)" = "0" ]; then
 
   # Fix ownership of writable repo mounts
   # Skip read-only mounts to avoid slow no-op chown -R on large repos
+  # Mark all repos as safe for git (ownership differs inside container)
   for dir in /repos/*/; do
     [ ! -d "$dir" ] && continue
+    su claude -c "git config --global --add safe.directory \"$dir\""
     if touch "$dir/.chown-test" 2>/dev/null; then
       rm -f "$dir/.chown-test"
       chown -R claude:claude "$dir"
