@@ -53,6 +53,7 @@ export async function canUseTool(
 // ---------------------------------------------------------------------------
 
 export interface ReviewContext {
+  prId: number;
   prTitle: string;
   prDescription: string;
   prAuthor: string;
@@ -71,7 +72,7 @@ export function looksLikeReview(text: string): boolean {
 // Prompt construction
 // ---------------------------------------------------------------------------
 
-export function buildUserPrompt(context: ReviewContext): string {
+export function buildUserPrompt(context: ReviewContext, diffFilename: string): string {
   const lines: string[] = [
     '## Pull Request Review',
     '',
@@ -92,16 +93,10 @@ export function buildUserPrompt(context: ReviewContext): string {
     'The skill expects REVIEW_DIFF and BRANCH_NAME variables.',
     '',
     'Set these before invoking:',
-    `- REVIEW_DIFF: The unified diff provided below`,
+    `- REVIEW_DIFF: Read from file \`${diffFilename}\` in the working directory`,
     `- BRANCH_NAME: ${context.sourceBranch}`,
     '',
     'Invoke the skill now using the Skill tool with skill name "code-review".',
-    '',
-    '## REVIEW_DIFF',
-    '',
-    '```diff',
-    context.diff,
-    '```',
   );
 
   return lines.join('\n');
@@ -132,7 +127,9 @@ export async function reviewPullRequest(
   const staged = await stageAgentWorkspace(agentSourceDir, stagingDir);
 
   try {
-    const userPrompt = buildUserPrompt(context);
+    const diffFilename = `REVIEW_DIFF_${context.prId}.diff`;
+    await Bun.write(join(stagingDir, diffFilename), context.diff);
+    const userPrompt = buildUserPrompt(context, diffFilename);
 
     let result: string | undefined;
     let resultSubtype: string | undefined;

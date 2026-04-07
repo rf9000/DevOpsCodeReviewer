@@ -8,6 +8,7 @@ import type { ReviewContext } from '../../src/services/reviewer.ts';
 
 function mockContext(overrides: Partial<ReviewContext> = {}): ReviewContext {
   return {
+    prId: 42,
     prTitle: 'Fix null pointer in auth module',
     prDescription: 'Fixes a crash when the user token is expired.',
     prAuthor: 'Jane Doe',
@@ -25,33 +26,33 @@ function mockContext(overrides: Partial<ReviewContext> = {}): ReviewContext {
 describe('buildUserPrompt', () => {
   test('includes PR title', () => {
     const ctx = mockContext();
-    const prompt = buildUserPrompt(ctx);
+    const prompt = buildUserPrompt(ctx, 'REVIEW_DIFF_42.diff');
     expect(prompt).toContain('**Title:** Fix null pointer in auth module');
   });
 
   test('includes PR author', () => {
     const ctx = mockContext();
-    const prompt = buildUserPrompt(ctx);
+    const prompt = buildUserPrompt(ctx, 'REVIEW_DIFF_42.diff');
     expect(prompt).toContain('**Author:** Jane Doe');
   });
 
   test('includes source and target branches', () => {
     const ctx = mockContext();
-    const prompt = buildUserPrompt(ctx);
+    const prompt = buildUserPrompt(ctx, 'REVIEW_DIFF_42.diff');
     expect(prompt).toContain('**Source:** feature/fix-auth → main');
   });
 
-  test('includes diff in a code block', () => {
+  test('references diff file instead of embedding content', () => {
     const ctx = mockContext();
-    const prompt = buildUserPrompt(ctx);
-    expect(prompt).toContain('```diff');
-    expect(prompt).toContain('--- a/auth.ts');
-    expect(prompt).toContain('```');
+    const prompt = buildUserPrompt(ctx, 'REVIEW_DIFF_42.diff');
+    expect(prompt).toContain('REVIEW_DIFF_42.diff');
+    expect(prompt).not.toContain('```diff');
+    expect(prompt).not.toContain('--- a/auth.ts');
   });
 
   test('includes instructions to invoke skill', () => {
     const ctx = mockContext();
-    const prompt = buildUserPrompt(ctx);
+    const prompt = buildUserPrompt(ctx, 'REVIEW_DIFF_42.diff');
     expect(prompt).toContain('code-review');
     expect(prompt).toContain('Skill');
     expect(prompt).toContain('REVIEW_DIFF');
@@ -60,13 +61,13 @@ describe('buildUserPrompt', () => {
 
   test('includes description when provided', () => {
     const ctx = mockContext({ prDescription: 'Important security fix' });
-    const prompt = buildUserPrompt(ctx);
+    const prompt = buildUserPrompt(ctx, 'REVIEW_DIFF_42.diff');
     expect(prompt).toContain('**Description:** Important security fix');
   });
 
   test('omits description when empty', () => {
     const ctx = mockContext({ prDescription: '' });
-    const prompt = buildUserPrompt(ctx);
+    const prompt = buildUserPrompt(ctx, 'REVIEW_DIFF_42.diff');
     expect(prompt).not.toContain('**Description:**');
   });
 });

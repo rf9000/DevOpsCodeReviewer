@@ -155,6 +155,7 @@ export async function processPR(
     }
 
     const context: ReviewContext = {
+      prId: candidate.pullRequest.pullRequestId,
       prTitle: candidate.pullRequest.title,
       prDescription: candidate.pullRequest.description,
       prAuthor: candidate.pullRequest.createdBy.displayName,

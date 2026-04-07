@@ -11,7 +11,7 @@ Review AL code changes by dispatching 6 focused review agents in parallel, each 
 
 This skill expects two inputs to be available in the conversation context before it is invoked:
 
-- **`REVIEW_DIFF`**: A unified diff (`--unified=5`) of the AL files to review. The caller is responsible for producing this diff (e.g., `git diff --cached`, `git diff`, PR diff, etc.).
+- **`REVIEW_DIFF`**: A unified diff (`--unified=5`) of the AL files to review, stored as a file in the working directory (e.g., `REVIEW_DIFF_123.diff`). The caller provides the filename. Read the file to access the diff content.
 - **`BRANCH_NAME`**: The current branch name (for the report header).
 
 If `REVIEW_DIFF` is empty or contains no `.al` file changes, report **"Nothing to review — no AL file changes found in the provided diff."** and stop.
@@ -80,7 +80,7 @@ Read each agent prompt file from `.claude/skills/code-review/agents/` and dispat
 Each agent receives in its prompt:
 1. The agent prompt file content (its instructions)
 2. Its CLAUDE.md excerpt (from Step 2)
-3. The `REVIEW_DIFF` (from Step 0)
+3. The `REVIEW_DIFF` filename — tell agents to read the diff from this file in the working directory (do NOT paste the diff content into the agent prompt)
 4. The `AL_OBJECT_MAP` (from Step 1)
 5. Instruction to read its assigned rule files (paths listed in agent prompt)
 

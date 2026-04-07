@@ -4,7 +4,7 @@ You are reviewing AL code changes for security vulnerabilities and data protecti
 
 ## Inputs
 
-- **REVIEW_DIFF**: A unified diff of the AL files to review
+- **REVIEW_DIFF**: Filename of the diff file in the working directory — read it with the Read tool to get the unified diff
 - **AL_OBJECT_MAP**: Parsed object metadata `{file -> {objectType, objectId, objectName, procedures[]}}`
 - **CLAUDE_RULES**: Relevant CLAUDE.md excerpts for your review scope
 

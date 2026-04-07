@@ -95,6 +95,7 @@ describe('processPR', () => {
     const reviewCall = (deps.reviewPullRequest as ReturnType<typeof mock>).mock.calls[0]!;
     const passedConfig = reviewCall[0] as AppConfig;
     const context = reviewCall[1] as {
+      prId: number;
       prTitle: string;
       prDescription: string;
       prAuthor: string;
@@ -104,6 +105,7 @@ describe('processPR', () => {
     };
 
     expect(passedConfig).toBe(config);
+    expect(context.prId).toBe(42);
     // refs/heads/ prefix should be stripped
     expect(context.sourceBranch).toBe('feature/fix-auth');
     expect(context.targetBranch).toBe('main');
