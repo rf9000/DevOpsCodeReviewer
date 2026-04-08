@@ -163,6 +163,7 @@ export async function reviewPullRequest(
       }
       if (message.type === 'result') {
         resultSubtype = message.subtype;
+        console.log(`  Review cost: $${message.total_cost_usd.toFixed(4)} | ${message.usage.input_tokens ?? 0} in / ${message.usage.output_tokens ?? 0} out | ${turnCount} turns`);
         if (message.subtype === 'success') {
           result = message.result;
         } else if (message.subtype === 'error_max_turns') {
