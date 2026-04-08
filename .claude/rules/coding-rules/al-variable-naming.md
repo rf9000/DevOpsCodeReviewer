@@ -12,8 +12,35 @@ Variables referencing AL objects must contain the object's name (abbreviated whe
 - Start with a capital letter
 - Use PascalCase for compound words
 - Omit blanks, periods, parentheses, and special characters
-- **Omit prefixes** (e.g., `CTS-CB`) from variable names - use the object name without the app-specific prefix
+- **Prefix handling depends on context** — see same-app vs cross-app rules below
 - Match the object name as closely as possible
+
+### Same-App References (omit prefix)
+When referencing an object from the **same app**, omit the app-specific prefix (e.g., `CTS-CB`, `CTS-PE`, `CTS-PI`):
+
+```al
+// In base-application (CTS-CB), referencing a CTS-CB object:
+var
+    PaymentFieldMapper: Codeunit "CTS-CB Payment Field Mapper";  // ✓ same-app, omit prefix
+    UpgradeTag: Codeunit "CTS-CB Upgrade Tag";                   // ✓ same-app, omit prefix
+```
+
+### Cross-App References (keep full prefix)
+When referencing an object from a **different app**, keep the full prefix (without hyphens) to disambiguate the source app:
+
+```al
+// In import app (CTS-PI), referencing a CTS-CB object:
+var
+    CTSCBUpgradeTag: Codeunit "CTS-CB Upgrade Tag";              // ✓ cross-app, keep prefix
+
+// In base-application (CTS-CB), referencing a CTS-PI object:
+var
+    CTSPIUpgradeTag: Codeunit "CTS-PI Upgrade Tag";              // ✓ cross-app, keep prefix
+
+// In export app (CTS-PE), referencing a CTS-CB object:
+var
+    CTSCBPaymentFieldMapper: Codeunit "CTS-CB Payment Field Mapper"; // ✓ cross-app, keep prefix
+```
 
 ### Bad Code
 ```al
@@ -22,6 +49,10 @@ var
     Postline: Codeunit "Gen. Jnl.-Post Line";
     "Amount (LCY)": Decimal;
     Helper: Codeunit "Payment Field Mapper";
+    // In import app, referencing base-app object without prefix:
+    UpgradeTag: Codeunit "CTS-CB Upgrade Tag";       // ✗ cross-app ref needs CTSCB prefix
+    // In base-app, referencing own object with prefix:
+    CTSCBUpgradeTag: Codeunit "CTS-CB Upgrade Tag";  // ✗ same-app ref should omit prefix
 ```
 
 ### Good Code
@@ -31,16 +62,23 @@ var
     GenJnlPostLine: Codeunit "Gen. Jnl.-Post Line";
     AmountLCY: Decimal;
     PaymentFieldMapper: Codeunit "Payment Field Mapper";
+    // In import app, referencing base-app object:
+    CTSCBUpgradeTag: Codeunit "CTS-CB Upgrade Tag";  // ✓ cross-app, prefix retained
+    // In base-app, referencing own object:
+    UpgradeTag: Codeunit "CTS-CB Upgrade Tag";        // ✓ same-app, prefix omitted
 ```
 
 ### Transformation Rules
-| Object Name | Variable Name | Rule Applied |
-|-------------|---------------|--------------|
-| `"Job WIP Buffer"` | `JobWIPBuffer` | Remove spaces |
-| `"Gen. Jnl.-Post Line"` | `GenJnlPostLine` | Remove periods, hyphens |
-| `"Amount (LCY)"` | `AmountLCY` | Remove parentheses, spaces |
-| `"Sales Header"` | `SalesHeader` | Remove space |
-| `"CTS-CB Payment Field Mapper"` | `PaymentFieldMapper` | Omit prefix, remove spaces |
+| Object Name | Context | Variable Name | Rule Applied |
+|-------------|---------|---------------|--------------|
+| `"Job WIP Buffer"` | any | `JobWIPBuffer` | Remove spaces |
+| `"Gen. Jnl.-Post Line"` | any | `GenJnlPostLine` | Remove periods, hyphens |
+| `"Amount (LCY)"` | any | `AmountLCY` | Remove parentheses, spaces |
+| `"Sales Header"` | any | `SalesHeader` | Remove space |
+| `"CTS-CB Payment Field Mapper"` | same-app (CTS-CB) | `PaymentFieldMapper` | Omit prefix, remove spaces |
+| `"CTS-CB Payment Field Mapper"` | cross-app (CTS-PI) | `CTSCBPaymentFieldMapper` | Keep prefix, remove hyphens/spaces |
+| `"CTS-PI Upgrade Tag"` | same-app (CTS-PI) | `UpgradeTag` | Omit prefix |
+| `"CTS-PI Upgrade Tag"` | cross-app (CTS-CB) | `CTSPIUpgradeTag` | Keep prefix, remove hyphens |
 
 ---
 
@@ -266,6 +304,7 @@ table 50100 "My Table"
 ## Quick Validation Checklist
 
 - [ ] Variable names match their object names (no generic names like `Helper`, `Temp`, `Buffer`)
+- [ ] Same-app references omit the app prefix; cross-app references keep the full prefix (e.g., `CTSCB`, `CTSPI`)
 - [ ] No spaces, periods, parentheses in variable names
 - [ ] Variables start with capital letter and use PascalCase
 - [ ] Complex types (Record, Codeunit, etc.) declared before simple types
