@@ -85,47 +85,29 @@ export async function gitDiff(
       throw new Error(`git fetch failed (exit ${fetchExit}): ${stderr}`);
     }
 
-    // Check whether the source/target refs actually exist.  The local repo
-    // may not have fetched these branches from Azure DevOps yet (e.g. new
-    // feature branches).  When missing, resolve the upstream URL from the
-    // local repo's config and fetch the specific branches with PAT auth.
-    const refExists = async (ref: string) => {
-      const p = Bun.spawn(['git', 'rev-parse', '--verify', '--quiet', ref], {
-        cwd: clonePath, stdout: 'pipe', stderr: 'pipe',
-      });
-      return (await p.exited) === 0;
-    };
+    // Always fetch source and target branches from upstream so refs are
+    // current.  A stale local origin/main causes the three-dot diff to
+    // include commits already merged, inflating the review scope.
+    const urlProc = Bun.spawn(
+      ['git', 'config', '--get', 'remote.origin.url'],
+      { cwd: targetRepoPath, stdout: 'pipe', stderr: 'pipe' },
+    );
+    if ((await urlProc.exited) !== 0) {
+      throw new Error('Cannot determine upstream remote URL from target repo');
+    }
+    const upstreamUrl = (await new Response(urlProc.stdout).text()).trim();
 
-    const sourceRef = `origin/${sourceBranch}`;
-    const targetRef = `origin/${targetBranch}`;
-
-    if (!(await refExists(sourceRef)) || !(await refExists(targetRef))) {
-      // Discover the real Azure DevOps remote URL from the local repo
-      const urlProc = Bun.spawn(
-        ['git', 'config', '--get', 'remote.origin.url'],
-        { cwd: targetRepoPath, stdout: 'pipe', stderr: 'pipe' },
-      );
-      if ((await urlProc.exited) !== 0) {
-        throw new Error('Cannot determine upstream remote URL from target repo');
-      }
-      const upstreamUrl = (await new Response(urlProc.stdout).text()).trim();
-
-      const refspecs: string[] = [];
-      if (!(await refExists(sourceRef)))
-        refspecs.push(`+refs/heads/${sourceBranch}:refs/remotes/origin/${sourceBranch}`);
-      if (!(await refExists(targetRef)))
-        refspecs.push(`+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`);
-
-      const authHeader = `Authorization: Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
-      const upstreamFetch = Bun.spawn(
-        ['git', '-c', `http.extraHeader=${authHeader}`, 'fetch', upstreamUrl, ...refspecs],
-        { cwd: clonePath, stdout: 'pipe', stderr: 'pipe' },
-      );
-      const upstreamExit = await upstreamFetch.exited;
-      if (upstreamExit !== 0) {
-        const stderr = await new Response(upstreamFetch.stderr).text();
-        throw new Error(`git fetch from upstream failed (exit ${upstreamExit}): ${stderr}`);
-      }
+    const authHeader = `Authorization: Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
+    const upstreamFetch = Bun.spawn(
+      ['git', '-c', `http.extraHeader=${authHeader}`, 'fetch', upstreamUrl,
+        `+refs/heads/${sourceBranch}:refs/remotes/origin/${sourceBranch}`,
+        `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`],
+      { cwd: clonePath, stdout: 'pipe', stderr: 'pipe' },
+    );
+    const upstreamExit = await upstreamFetch.exited;
+    if (upstreamExit !== 0) {
+      const stderr = await new Response(upstreamFetch.stderr).text();
+      throw new Error(`git fetch from upstream failed (exit ${upstreamExit}): ${stderr}`);
     }
 
     const diffProc = Bun.spawn(
