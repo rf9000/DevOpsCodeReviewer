@@ -12,6 +12,7 @@ const envSchema = z.object({
   CLAUDE_MODEL: z.string().default('claude-sonnet-4-6'),
   REVIEW_LABEL: z.string().default('code-review'),
   STATE_DIR: z.string().default('.state'),
+  ANTHROPIC_API_KEY: z.string().optional(),
 });
 
 export function loadConfig(
@@ -40,6 +41,7 @@ export function loadConfig(
     claudeModel: parsed.CLAUDE_MODEL,
     reviewLabel: parsed.REVIEW_LABEL,
     stateDir: parsed.STATE_DIR,
+    anthropicApiKey: parsed.ANTHROPIC_API_KEY?.trim() || undefined,
     dryRun: false,
   };
 }

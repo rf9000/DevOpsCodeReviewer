@@ -136,6 +136,10 @@ export async function reviewPullRequest(
     const assistantTexts: string[] = [];
     let turnCount = 0;
 
+    const sdkEnv = config.anthropicApiKey
+      ? { ...process.env, ANTHROPIC_API_KEY: config.anthropicApiKey }
+      : undefined;
+
     for await (const message of query({
       prompt: userPrompt,
       options: {
@@ -152,6 +156,7 @@ export async function reviewPullRequest(
         },
         settingSources: ['project'],
         cwd: stagingDir,
+        ...(sdkEnv ? { env: sdkEnv } : {}),
       },
     })) {
       if (message.type === 'assistant') {
@@ -163,7 +168,8 @@ export async function reviewPullRequest(
       }
       if (message.type === 'result') {
         resultSubtype = message.subtype;
-        console.log(`  Review cost: $${message.total_cost_usd.toFixed(4)} | ${message.usage.input_tokens ?? 0} in / ${message.usage.output_tokens ?? 0} out | ${turnCount} turns`);
+        const models = Object.keys(message.modelUsage).join(', ') || 'unknown';
+        console.log(`  Review cost: $${message.total_cost_usd.toFixed(4)} | model: ${models} | ${message.usage.input_tokens ?? 0} in / ${message.usage.output_tokens ?? 0} out | ${turnCount} turns`);
         if (message.subtype === 'success') {
           result = message.result;
         } else if (message.subtype === 'error_max_turns') {

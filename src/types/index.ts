@@ -11,6 +11,7 @@ export interface AppConfig {
   claudeModel: string;
   reviewLabel: string;
   stateDir: string;
+  anthropicApiKey?: string;
   dryRun: boolean;
 }
 
